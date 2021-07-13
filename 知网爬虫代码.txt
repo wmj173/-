@@ -1,0 +1,131 @@
+import time
+import random
+import pandas as pd
+from loguru import logger
+from lxml import etree
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+
+
+#  设置浏览器
+options = Options()
+# options.add_argument('disable-infobars')
+# options.add_experimental_option('excludeSwitches', ['enable-automation'])
+# options.add_experimental_option("prefs", {"profile.managed_default_content_settings.images": 2})
+options.debugger_address = "127.0.0.1:9299"  # 远程访问端口，默认设置9299
+browser = webdriver.Chrome(chrome_options=options)
+logger.info(">>>>>浏览器链接成功<<<<<")
+# 请在CMD使用以下命令启动Chrome浏览器
+# chrome.exe的绝对路径  exam： C:\Progra~1\Google\Chrome\Application\chrome.exe --remote-debugging-port=9299
+KEYWORDS = 'Python'  # 定义关键字
+
+def search_keywords(KEYWORDS):
+    """
+    浏览器打开搜索界面，输入关键词并搜索
+    :param KEYWORDS:
+    :return: None
+    """
+    url = 'https://wap.cnki.net/touch/web/Article/SearchIndex'  # 定义初始URL
+    browser.get(url)  # 浏览器打开URL
+    time.sleep(2)  # 等待2秒
+    label_input = browser.find_element_by_id('keyword_ordinary')  # 根据id找到输入框
+    label_input.click()  # 点击输入框
+    label_input.send_keys(KEYWORDS)  # 输入搜索关键字
+    browser.execute_script("SearchBtn(0)")  # 根据网页JS点击搜索
+
+def scroll_to_bottom():
+    """
+    滚动到屏幕底部
+    :return: None
+    """
+    browser.execute_script("var q=document.documentElement.scrollTop=100000")  # 浏览器执行js滚动页面到底部
+
+def next_page():
+    """
+    点击加载更多
+    :return:None
+    """
+    browser.execute_script("LoadNextPage();")  # 通过网页JS点击加载更多
+
+def parse_files_name(res):
+    """
+    解析出文件的ID
+    :param res: 网页源代码
+    :return:  ID列表
+    """
+    info = etree.HTML(res)  # 使用Xpath解析
+    files_name = info.xpath('//div[@class="c-company__body-item"]/@data-filename')  # 直接定位filename
+    return files_name  # 返回列表
+
+def browse_file(file_name):
+    """
+    浏览器打开每篇文章的网页并返回网页源代码
+    :param file_name: 文章ID
+    :return: 网页源代码
+    """
+    while True:  # 无限循环知道打开网址
+        try:  # try
+            url = f"https://wap.cnki.net/touch/web/Journal/Article/{file_name}.html"  # 定义URL
+            print(f"当前抓取链接： {url}")  # 打印当前url
+            browser.get(url)  # 浏览器打开链接
+            time.sleep(2)  # 等待2秒
+            res = browser.page_source  # 获取网页源代码
+            if '关键词:' in res:  # 检查网页源代码是否OK
+                return res  # 如果ok返回网页源代码
+        except Exception as e:  # 如果报错
+            logger.debug(e)  # logger错误信息
+
+def parse_article_data(res):
+    """
+    解析文章网页源代码
+    :param res: 网页源代码
+    :return: 数据字典
+    """
+    dict_a = {}  # 定义空字典
+    info = etree.HTML(res)  # 解析网页源代码
+    title = ''.join([x.strip() for x in info.xpath('//div[@class="c-card__title2"]//text()') if x.strip() != ''])  # 解析文章标题
+    dict_a.update({'title': title})  # 字典添加标题
+    author_1 = ''.join([x.strip()+',' for x in info.xpath('//div[@class="c-card__author"]//text()') if x.strip() != ''])  # 解析作者，以,分离
+    author_2 = author_1.split('|')[-1][1:-1]  # 去掉作者两边的都好
+    dict_a.update({'author': author_2})  # 字典添加作者
+    abstract = ''.join(info.xpath('//div[@class="c-card__aritcle"]//text()')).strip()  # 解析摘要
+    dict_a.update({'abstract': abstract})  # 字典添加摘要
+    div_labels = info.xpath('//div[@class="c-card__paper-item"]')  # 解析关键字
+    for div_label in div_labels:  # 便利所有标签
+        div_text = ''.join([x.strip() for x in div_label.xpath('.//text()') if x.strip() != ''])  # 解析标签text
+        if '关键词:' in div_text:  # 如果关键字在标签文本内
+            dict_a.update({'keyword': div_text.replace('关键词:', '')})  # 字典添加关键字
+            break  # 跳出for循环
+    resourced = ''.join(info.xpath('//a[@class="c-card__statics-resource"]/text()')).strip()  # 解析被引用
+    dict_a.update({'resourced_count': resourced})  # 字典添加被引用次数
+    c_book_1 = info.xpath('//div[@class="c-book__content"]//text()')  # 解析来源
+    c_book_2 = ''.join([x.strip() + " " for x in c_book_1 if x.strip() != '']).strip()  # 解析来源
+    dict_a.update({'c_book': c_book_2})  # 字典添加来源
+    logger.info(dict_a)  # logger字典，输出
+    return dict_a  # 返回字典
+
+def save_excel(list):
+    """
+    pandas保存excel
+    :param list: 传入列表
+    :return: None
+    """
+    df = pd.DataFrame(list)  # 将列表转换为dataframe
+    df.to_excel('./result.xlsx', index=False)  # 保存到本地，可自行命名
+
+if __name__ == '__main__':
+    search_keywords(KEYWORDS)  # 根据关键字搜索
+    xyz = 1  # 定义一个变量
+    while xyz <= 2:  # 定义点击几次加载更多（翻页）
+        scroll_to_bottom()  # 滚动页面至底部
+        next_page()  # 点击加载更多
+        time.sleep(random.uniform(2, 3))  # 随即等待2-3秒
+        xyz = xyz + 1  # 变量+1
+    res = browser.page_source  # 获取网页源代码
+    files_name = parse_files_name(res)  # 解析网页源代码，返回文章ID
+    data_list = []  # 定义空列表，存放解析的数据
+    for file in files_name:  # 遍历文章ID
+        res = browse_file(file)  # 浏览器打开文章，如果打不开会一直在while True里面循环，直到页面成功加载才会停止循环并返回源代码
+        dict_a = parse_article_data(res)  # 解析源代码
+        data_list.append(dict_a)  # 列表添加字典
+        save_excel(data_list)  # 建议每遍历一次保存一次，避免程序报错数据未保存
